@@ -3,7 +3,7 @@
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { CLOUDFLARE_WORKERS_AI_BASE_URL } from "../src/providers/cloudflare.js";
+import { CLOUDFLARE_AI_GATEWAY_BASE_URL, CLOUDFLARE_WORKERS_AI_BASE_URL } from "../src/providers/cloudflare.js";
 import {
 	Api,
 	type AnthropicMessagesCompat,
@@ -53,6 +53,36 @@ interface AiGatewayModel {
 	};
 }
 
+interface GitHubTreeResponse {
+	tree?: Array<{
+		path: string;
+		type: string;
+	}>;
+}
+
+interface CloudflareDocsCatalogModel {
+	model_id: string;
+	name: string;
+	task: string;
+	tags?: string[];
+	context_length?: number | null;
+	max_output_tokens?: number | null;
+	metadata?: Record<string, unknown>;
+	schema?: Record<string, unknown>;
+}
+
+interface CloudflareDocsWorkersAIModel {
+	name: string;
+	description: string;
+	task: { name: string };
+	tags?: string[];
+	properties?: Array<{
+		property_id: string;
+		value: string | Array<Record<string, unknown>>;
+	}>;
+	schema?: Record<string, unknown>;
+}
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -64,8 +94,101 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const CLOUDFLARE_STATIC_HEADERS = {
+	"User-Agent": "pi-coding-agent",
+} as const;
+
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const CLOUDFLARE_DOCS_TREE_URL =
+	"https://api.github.com/repos/cloudflare/cloudflare-docs/git/trees/production?recursive=1";
+const CLOUDFLARE_DOCS_RAW_BASE_URL =
+	"https://raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/content";
+const CLOUDFLARE_CATALOG_MODEL_FILES_FALLBACK = [
+	"alibaba-qwen3-max.json",
+	"alibaba-qwen3.5-397b-a17b.json",
+	"anthropic-claude-haiku-4.5.json",
+	"anthropic-claude-opus-4.6.json",
+	"anthropic-claude-opus-4.7.json",
+	"anthropic-claude-sonnet-4.5.json",
+	"anthropic-claude-sonnet-4.6.json",
+	"anthropic-claude-sonnet-4.json",
+	"google-gemini-3-flash.json",
+	"google-gemini-3.1-flash-lite.json",
+	"google-gemini-3.1-pro.json",
+	"minimax-m2.7.json",
+	"openai-gpt-4.1-mini.json",
+	"openai-gpt-4.1.json",
+	"openai-gpt-5.4-mini.json",
+	"openai-gpt-5.4-nano.json",
+	"openai-gpt-5.4-pro.json",
+	"openai-gpt-5.4.json",
+	"openai-gpt-5.5.json",
+	"openai-gpt-5.json",
+	"openai-o4-mini.json",
+] as const;
+const CLOUDFLARE_WORKERS_AI_MODEL_FILES_FALLBACK = [
+	"deepseek-coder-6.7b-base-awq.json",
+	"deepseek-coder-6.7b-instruct-awq.json",
+	"deepseek-math-7b-instruct.json",
+	"deepseek-r1-distill-qwen-32b.json",
+	"discolm-german-7b-v1-awq.json",
+	"falcon-7b-instruct.json",
+	"gemma-2b-it-lora.json",
+	"gemma-3-12b-it.json",
+	"gemma-4-26b-a4b-it.json",
+	"gemma-7b-it-lora.json",
+	"gemma-7b-it.json",
+	"gemma-sea-lion-v4-27b-it.json",
+	"glm-4.7-flash.json",
+	"gpt-oss-120b.json",
+	"gpt-oss-20b.json",
+	"granite-4.0-h-micro.json",
+	"hermes-2-pro-mistral-7b.json",
+	"kimi-k2.5.json",
+	"kimi-k2.6.json",
+	"llama-2-13b-chat-awq.json",
+	"llama-2-7b-chat-fp16.json",
+	"llama-2-7b-chat-hf-lora.json",
+	"llama-2-7b-chat-int8.json",
+	"llama-3-8b-instruct-awq.json",
+	"llama-3-8b-instruct.json",
+	"llama-3.1-70b-instruct.json",
+	"llama-3.1-8b-instruct-awq.json",
+	"llama-3.1-8b-instruct-fast.json",
+	"llama-3.1-8b-instruct-fp8.json",
+	"llama-3.1-8b-instruct.json",
+	"llama-3.2-11b-vision-instruct.json",
+	"llama-3.2-1b-instruct.json",
+	"llama-3.2-3b-instruct.json",
+	"llama-3.3-70b-instruct-fp8-fast.json",
+	"llama-4-scout-17b-16e-instruct.json",
+	"llama-guard-3-8b.json",
+	"llamaguard-7b-awq.json",
+	"meta-llama-3-8b-instruct.json",
+	"mistral-7b-instruct-v0.1-awq.json",
+	"mistral-7b-instruct-v0.1.json",
+	"mistral-7b-instruct-v0.2-lora.json",
+	"mistral-7b-instruct-v0.2.json",
+	"mistral-small-3.1-24b-instruct.json",
+	"nemotron-3-120b-a12b.json",
+	"neural-chat-7b-v3-1-awq.json",
+	"openchat-3.5-0106.json",
+	"openhermes-2.5-mistral-7b-awq.json",
+	"phi-2.json",
+	"qwen1.5-0.5b-chat.json",
+	"qwen1.5-1.8b-chat.json",
+	"qwen1.5-14b-chat-awq.json",
+	"qwen1.5-7b-chat-awq.json",
+	"qwen2.5-coder-32b-instruct.json",
+	"qwen3-30b-a3b-fp8.json",
+	"qwq-32b.json",
+	"sqlcoder-7b-2.json",
+	"starling-lm-7b-beta.json",
+	"tinyllama-1.1b-chat-v1.0.json",
+	"una-cybertron-7b-v2-bf16.json",
+	"zephyr-7b-beta-awq.json",
+] as const;
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
@@ -197,6 +320,156 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Vercel AI Gateway models:", error);
+		return [];
+	}
+}
+
+function getGitHubHeaders(): Record<string, string> {
+	const headers: Record<string, string> = { "User-Agent": "pi-coding-agent" };
+	const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
+	}
+	return headers;
+}
+
+function getCloudflareProperty(
+	model: CloudflareDocsWorkersAIModel,
+	propertyId: string,
+): string | Array<Record<string, unknown>> | undefined {
+	return model.properties?.find((property) => property.property_id === propertyId)?.value;
+}
+
+function getCloudflarePrice(model: CloudflareDocsWorkersAIModel, unitIncludes: string): number {
+	const price = getCloudflareProperty(model, "price");
+	if (!Array.isArray(price)) return 0;
+	const entry = price.find((item) => {
+		const unit = typeof item.unit === "string" ? item.unit.toLowerCase() : "";
+		return unit.includes(unitIncludes);
+	});
+	return typeof entry?.price === "number" ? entry.price : 0;
+}
+
+function hasCloudflareCapability(
+	model: Pick<CloudflareDocsCatalogModel, "tags" | "metadata" | "schema"> &
+		Partial<Pick<CloudflareDocsWorkersAIModel, "properties">>,
+	terms: string[],
+): boolean {
+	const haystack = JSON.stringify({
+		tags: model.tags ?? [],
+		metadata: model.metadata ?? {},
+		properties: model.properties ?? [],
+		schema: model.schema ?? {},
+	}).toLowerCase();
+	return terms.some((term) => haystack.includes(term.toLowerCase()));
+}
+
+async function fetchCloudflareDocsTree(): Promise<GitHubTreeResponse> {
+	const response = await fetch(CLOUDFLARE_DOCS_TREE_URL, { headers: getGitHubHeaders() });
+	if (!response.ok) {
+		console.warn(
+			`GitHub trees API returned ${response.status}; using Cloudflare docs model file fallback list. ` +
+				"Set GITHUB_TOKEN or GH_TOKEN to avoid unauthenticated GitHub API limits.",
+		);
+		return {};
+	}
+	return (await response.json()) as GitHubTreeResponse;
+}
+
+async function fetchCloudflareDocsCollection<T>(
+	tree: GitHubTreeResponse,
+	collection: "catalog-models" | "workers-ai-models",
+): Promise<T[]> {
+	const prefix = `src/content/${collection}/`;
+	const fallbackFiles =
+		collection === "catalog-models"
+			? [...CLOUDFLARE_CATALOG_MODEL_FILES_FALLBACK]
+			: [...CLOUDFLARE_WORKERS_AI_MODEL_FILES_FALLBACK];
+	const jsonFiles =
+		tree.tree
+			?.filter((item) => item.type === "blob" && item.path.startsWith(prefix) && item.path.endsWith(".json"))
+			.map((item) => item.path.slice(prefix.length)) ?? fallbackFiles;
+
+	const models = await Promise.all(
+		jsonFiles.map(async (fileName) => {
+			const url = `${CLOUDFLARE_DOCS_RAW_BASE_URL}/${collection}/${fileName}`;
+			const itemResponse = await fetch(url, { headers: getGitHubHeaders() });
+			if (!itemResponse.ok) {
+				throw new Error(`Failed to fetch ${url}: ${itemResponse.status}`);
+			}
+			return (await itemResponse.json()) as T;
+		}),
+	);
+
+	return models;
+}
+
+async function fetchCloudflareAiGatewayModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from Cloudflare docs catalog...");
+		const tree = await fetchCloudflareDocsTree();
+		const [catalogModels, workersAIModels] = await Promise.all([
+			fetchCloudflareDocsCollection<CloudflareDocsCatalogModel>(tree, "catalog-models"),
+			fetchCloudflareDocsCollection<CloudflareDocsWorkersAIModel>(tree, "workers-ai-models"),
+		]);
+
+		const models: Model<any>[] = [];
+
+		for (const model of catalogModels) {
+			if (model.task !== "Text Generation") continue;
+
+			models.push({
+				id: model.model_id,
+				name: model.name || model.model_id,
+				api: "openai-completions",
+				provider: "cloudflare-ai-gateway",
+				baseUrl: CLOUDFLARE_AI_GATEWAY_BASE_URL,
+				headers: { ...CLOUDFLARE_STATIC_HEADERS },
+				reasoning: hasCloudflareCapability(model, ["reasoning", "thinking"]),
+				input: hasCloudflareCapability(model, ["vision", "image", "multimodal"]) ? ["text", "image"] : ["text"],
+				cost: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+				},
+				contextWindow: model.context_length || 4096,
+				maxTokens: model.max_output_tokens || 4096,
+				compat: { sendSessionAffinityHeaders: true },
+			});
+		}
+
+		for (const model of workersAIModels) {
+			if (model.task?.name !== "Text Generation") continue;
+
+			const contextWindow = getCloudflareProperty(model, "context_window");
+			const maxOutputTokens = getCloudflareProperty(model, "max_output_tokens");
+
+			models.push({
+				id: `workers-ai/${model.name}`,
+				name: model.name,
+				api: "openai-completions",
+				provider: "cloudflare-ai-gateway",
+				baseUrl: CLOUDFLARE_AI_GATEWAY_BASE_URL,
+				headers: { ...CLOUDFLARE_STATIC_HEADERS },
+				reasoning: hasCloudflareCapability(model, ["reasoning", "thinking"]),
+				input: hasCloudflareCapability(model, ["vision", "image", "multimodal"]) ? ["text", "image"] : ["text"],
+				cost: {
+					input: getCloudflarePrice(model, "input tokens"),
+					output: getCloudflarePrice(model, "output tokens"),
+					cacheRead: getCloudflarePrice(model, "cached input tokens"),
+					cacheWrite: 0,
+				},
+				contextWindow: typeof contextWindow === "string" ? parseInt(contextWindow, 10) || 4096 : 4096,
+				maxTokens: typeof maxOutputTokens === "string" ? parseInt(maxOutputTokens, 10) || 4096 : 4096,
+				compat: { sendSessionAffinityHeaders: true },
+			});
+		}
+
+		console.log(`Fetched ${models.length} text-generation models from Cloudflare docs catalog`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Cloudflare docs catalog models:", error);
 		return [];
 	}
 }
@@ -377,7 +650,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Cloudflare Workers AI models
+		// Process Cloudflare Workers AI models for the direct Workers AI provider.
+		// Cloudflare AI Gateway models are generated from Cloudflare's public docs catalog below.
 		if (data["cloudflare-workers-ai"]?.models) {
 			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
 				const m = model as ModelsDevModel;
@@ -389,6 +663,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: "openai-completions",
 					provider: "cloudflare-workers-ai",
 					baseUrl: CLOUDFLARE_WORKERS_AI_BASE_URL,
+					headers: { ...CLOUDFLARE_STATIC_HEADERS },
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -745,13 +1020,15 @@ async function generateModels() {
 	// Fetch models from both sources
 	// models.dev: Anthropic, Google, OpenAI, Groq, Cerebras
 	// OpenRouter: xAI and other providers (excluding Anthropic, Google, OpenAI)
-	// AI Gateway: OpenAI-compatible catalog with tool-capable models
+	// Vercel AI Gateway: OpenAI-compatible catalog with tool-capable models
+	// Cloudflare AI Gateway: public Cloudflare docs model catalog (catalog-models + workers-ai-models)
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const cloudflareAiGatewayModels = await fetchCloudflareAiGatewayModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...cloudflareAiGatewayModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
