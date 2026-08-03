@@ -756,7 +756,11 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 							mimeType,
 							data: readFileSync(fullPath).toString("base64"),
 						});
-					} catch {
+					} catch (err) {
+						log.logWarning(
+							"Failed to read image attachment",
+							`${fullPath}: ${err instanceof Error ? err.message : String(err)}`,
+						);
 						nonImagePaths.push(fullPath);
 					}
 				} else {
