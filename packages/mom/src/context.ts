@@ -14,6 +14,7 @@ import type { UserMessage } from "@mariozechner/pi-ai";
 import { type SessionManager, type SessionMessageEntry, SettingsManager } from "@mariozechner/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import * as log from "./log.js";
 
 // ============================================================================
 // Sync log.jsonl to SessionManager
@@ -124,8 +125,8 @@ export function syncLogToSessionManager(
 
 			newMessages.push({ timestamp: msgTime, message: userMessage });
 			existingMessages.add(messageText); // Track to avoid duplicates within this sync
-		} catch {
-			// Skip malformed lines
+		} catch (err) {
+			log.logWarning("Skipping malformed log.jsonl line", err instanceof Error ? err.message : String(err));
 		}
 	}
 

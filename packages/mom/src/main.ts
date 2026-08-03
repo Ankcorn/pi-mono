@@ -364,4 +364,7 @@ process.on("SIGTERM", () => {
 	process.exit(0);
 });
 
-bot.start();
+bot.start().catch((err) => {
+	log.logWarning("Failed to start bot", err instanceof Error ? err.message : String(err));
+	process.exit(1);
+});
